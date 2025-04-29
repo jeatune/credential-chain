@@ -1,4 +1,4 @@
-;; Title: CredentialChain.clar
+;; Title: CredentialChain
 ;; Summary: A decentralized credentials verification and management system built on Stacks
 ;; Description: This smart contract enables educational institutions to issue, verify, and manage digital credentials
 ;; on the Bitcoin Layer 2 blockchain (Stacks). It features institution registration with staking requirements,

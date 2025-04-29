@@ -359,3 +359,108 @@
         (ok true)
     )
 )
+
+;; Transfer System Functions
+
+;; Initiates a credential transfer to a new owner
+(define-public (request-credential-transfer 
+    (credential-id (string-ascii 64))
+    (new-owner principal)
+    (transfer-type (string-ascii 32))
+    (expiry-time uint))
+    
+    (let (
+        (transfer-id (var-get transfer-counter))
+        (credential (unwrap! (map-get? credentials {id: credential-id, student: tx-sender}) ERR-CREDENTIAL-NOT-FOUND))
+    )
+        (asserts! (not (get revoked credential)) ERR-INVALID-STATUS)
+        (asserts! (validate-expiry expiry-time) ERR-INVALID-EXPIRY)
+        (asserts! (validate-credential-id credential-id) ERR-INVALID-INPUT)
+        (asserts! (validate-non-empty-string transfer-type) ERR-INVALID-INPUT)
+        (asserts! (not (is-eq tx-sender new-owner)) ERR-INVALID-INPUT)
+        
+        (map-set transfer-requests transfer-id
+            {
+                credential-id: credential-id,
+                old-owner: tx-sender,
+                new-owner: new-owner,
+                status: "pending",
+                request-time: stacks-block-height,
+                expiry-time: expiry-time,
+                transfer-type: transfer-type
+            }
+        )
+        
+        (var-set transfer-counter (+ transfer-id u1))
+        (ok transfer-id)
+    )
+)
+
+;; Helper Functions
+
+;; Helper for batch validation
+(define-private (check-all-expiry-dates (expiry uint) (valid-so-far bool))
+    (and valid-so-far (validate-expiry expiry))
+)
+
+;; Checks if an address is a registered institution
+(define-private (is-institution (address principal))
+    (default-to false (get active (map-get? institutions address)))
+)
+
+;; Sanitizes input strings for security
+(define-private (sanitize-string (input (string-ascii 64)))
+    ;; Returns sanitized string (implementation placeholder)
+    input
+)
+
+;; Processes individual credential issuance for batch operations
+(define-private (process-credential-issuance
+    (credential-id (string-ascii 64))
+    (student principal)
+    (degree (string-ascii 64))
+    (year uint)
+    (metadata-url (string-ascii 256))
+    (expiry-date uint)
+    (category (string-ascii 32)))
+    
+    (begin
+        (map-set credentials 
+            {id: credential-id, student: student}
+            {
+                institution: tx-sender,
+                degree: degree,
+                year: year,
+                verified: true,
+                validation-level: u0,
+                endorsements: u0,
+                metadata-url: metadata-url,
+                expiry-date: expiry-date,
+                revoked: false,
+                category: category,
+                issue-date: stacks-block-height,
+                last-endorsed: u0
+            }
+        )
+        true
+    )
+)
+
+;; Read-Only Functions
+
+;; Gets information about a registered institution
+(define-read-only (get-institution-info (institution principal))
+    (map-get? institutions institution)
+)
+
+;; Gets detailed information about a specific credential
+(define-read-only (get-credential-info (credential-id (string-ascii 64)) (student principal))
+    (map-get? credentials {id: credential-id, student: student})
+)
+
+;; Gets information about an endorsement
+(define-read-only (get-endorsement-info 
+    (credential-id (string-ascii 64)) 
+    (endorser principal))
+    (map-get? endorsements {credential-id: credential-id, endorser: endorser})
+)

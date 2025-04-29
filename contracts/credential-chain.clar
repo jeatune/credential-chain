@@ -263,3 +263,99 @@
         (ok true)
     )
 )
+
+;; Issues multiple credentials in a single transaction
+(define-public (batch-issue-credentials
+    (credential-ids (list 50 (string-ascii 64)))
+    (students (list 50 principal))
+    (degrees (list 50 (string-ascii 64)))
+    (years (list 50 uint))
+    (metadata-urls (list 50 (string-ascii 256)))
+    (expiry-dates (list 50 uint))
+    (categories (list 50 (string-ascii 32))))
+    
+    (let (
+        (institution tx-sender)
+        (batch-size (len credential-ids))
+    )
+        (asserts! (<= batch-size MAX-BATCH-SIZE) ERR-INVALID-BATCH-SIZE)
+        (asserts! (is-institution institution) ERR-NOT-AUTHORIZED)
+        ;; Validate input lengths match
+        (asserts! (and 
+            (is-eq batch-size (len students))
+            (is-eq batch-size (len degrees))
+            (is-eq batch-size (len years))
+            (is-eq batch-size (len metadata-urls))
+            (is-eq batch-size (len expiry-dates))
+            (is-eq batch-size (len categories))
+        ) ERR-INVALID-BATCH-SIZE)
+        
+        ;; Validate each expiry date
+        (asserts! (fold check-all-expiry-dates expiry-dates true) ERR-INVALID-EXPIRY)
+        
+        (ok (map process-credential-issuance 
+            credential-ids
+            students
+            degrees
+            years
+            metadata-urls
+            expiry-dates
+            categories))
+    )
+)
+
+;; Endorsement System Functions
+
+;; Allows institutions to endorse credentials with additional details
+(define-public (endorse-credential-extended 
+    (credential-id (string-ascii 64))
+    (student principal)
+    (weight uint)
+    (comment (string-ascii 256))
+    (endorser-type (string-ascii 32)))
+    
+    (let (
+        (endorser tx-sender)
+        (credential (unwrap! (map-get? credentials {id: credential-id, student: student}) ERR-CREDENTIAL-NOT-FOUND))
+        (endorser-data (unwrap! (map-get? institutions endorser) ERR-NOT-AUTHORIZED))
+    )
+        (asserts! (get active endorser-data) ERR-NOT-AUTHORIZED)
+        (asserts! (not (get revoked credential)) ERR-INVALID-STATUS)
+        (asserts! (< stacks-block-height (get expiry-date credential)) ERR-EXPIRED)
+        (asserts! (validate-credential-id credential-id) ERR-INVALID-INPUT)
+        (asserts! (validate-endorsement-weight weight) ERR-INVALID-INPUT)
+        (asserts! (validate-non-empty-string endorser-type) ERR-INVALID-INPUT)
+        (asserts! (validate-comment comment) ERR-INVALID-INPUT)
+        
+        ;; Check if already endorsed by this endorser
+        (asserts! (is-none (map-get? endorsements {credential-id: credential-id, endorser: endorser})) ERR-ALREADY-ENDORSED)
+        
+        (map-set endorsements 
+            {credential-id: credential-id, endorser: endorser}
+            {
+                timestamp: stacks-block-height,
+                weight: weight,
+                comment: comment,
+                endorser-type: endorser-type
+            }
+        )
+        
+        (map-set credentials 
+            {id: credential-id, student: student}
+            (merge credential {
+                endorsements: (+ (get endorsements credential) u1),
+                last-endorsed: stacks-block-height
+            })
+        )
+        
+        (map-set institutions (get institution credential)
+            (merge endorser-data
+                {
+                    reputation-score: (+ (get reputation-score endorser-data) weight),
+                    last-update: stacks-block-height
+                }
+            )
+        )
+        (ok true)
+    )
+)

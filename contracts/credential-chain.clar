@@ -149,3 +149,117 @@
 (define-private (validate-principal (address principal))
     (not (is-eq address tx-sender))  ;; Can't delegate to yourself
 )
+
+(define-private (validate-student (student-address principal))
+    (not (is-eq student-address tx-sender))  ;; Institution can't issue to itself
+)
+
+(define-private (validate-comment (comment-text (string-ascii 256)))
+    ;; Limit comment length to reasonable size
+    (<= (len comment-text) u200)
+)
+
+;; Institution Management Functions
+
+;; Registers a new educational institution with stake requirement
+(define-public (register-institution (name (string-ascii 64)))
+    (let ((caller tx-sender))
+        (asserts! (not (default-to false (get active (map-get? institutions caller)))) ERR-ALREADY-REGISTERED)
+        (asserts! (validate-non-empty-string name) ERR-EMPTY-STRING)
+        (try! (stx-transfer? MINIMUM-STAKE caller (as-contract tx-sender)))
+        
+        (map-set institutions caller {
+            name: name,
+            stake-amount: MINIMUM-STAKE,
+            credentials-issued: u0,
+            reputation-score: u100,
+            active: true,
+            suspension-status: false,
+            registration-date: stacks-block-height,
+            last-update: stacks-block-height
+        })
+        
+        (var-set total-institutions (+ (var-get total-institutions) u1))
+        (ok true)
+    )
+)
+
+;; Adds a delegate with specific permissions for an institution
+(define-public (add-delegate 
+    (delegate-address principal)
+    (permissions (list 10 (string-ascii 32)))
+    (expiry uint))
+    (let ((institution tx-sender))
+        (asserts! (is-institution institution) ERR-NOT-AUTHORIZED)
+        (asserts! (validate-permissions permissions) ERR-INVALID-INPUT)
+        (asserts! (validate-expiry expiry) ERR-INVALID-EXPIRY)
+        (asserts! (validate-principal delegate-address) ERR-INVALID-DELEGATION)
+        
+        (map-set institution-delegates 
+            {institution: institution, delegate: delegate-address}
+            {
+                active: true,
+                permissions: permissions,
+                added-at: stacks-block-height,
+                expiry: expiry
+            }
+        )
+        (ok true)
+    )
+)
+
+;; Credential Management Functions
+
+;; Issues a new credential to a student
+(define-public (issue-credential 
+    (credential-id (string-ascii 64))
+    (student principal)
+    (degree (string-ascii 64))
+    (year uint)
+    (metadata-url (string-ascii 256))
+    (expiry-date uint)
+    (category (string-ascii 32)))
+    
+    (let (
+        (institution tx-sender)
+        (inst-data (unwrap! (map-get? institutions institution) ERR-NOT-AUTHORIZED))
+    )
+        (asserts! (get active inst-data) ERR-NOT-AUTHORIZED)
+        (asserts! (not (get suspension-status inst-data)) ERR-INVALID-STATUS)
+        (asserts! (validate-credential-id credential-id) ERR-INVALID-INPUT)
+        (asserts! (validate-non-empty-string degree) ERR-INVALID-INPUT)
+        (asserts! (validate-year year) ERR-INVALID-INPUT)
+        (asserts! (validate-url metadata-url) ERR-INVALID-INPUT)
+        (asserts! (validate-expiry expiry-date) ERR-INVALID-EXPIRY)
+        (asserts! (validate-non-empty-string category) ERR-INVALID-INPUT)
+        (asserts! (validate-student student) ERR-INVALID-INPUT)
+        
+        (map-set credentials 
+            {id: credential-id, student: student}
+            {
+                institution: institution,
+                degree: degree,
+                year: year,
+                verified: true,
+                validation-level: u0,
+                endorsements: u0,
+                metadata-url: metadata-url,
+                expiry-date: expiry-date,
+                revoked: false,
+                category: category,
+                issue-date: stacks-block-height,
+                last-endorsed: u0
+            }
+        )
+        
+        (map-set institutions institution
+            (merge inst-data 
+                {
+                    credentials-issued: (+ (get credentials-issued inst-data) u1),
+                    last-update: stacks-block-height
+                }
+            )
+        )
+        (ok true)
+    )
+)
